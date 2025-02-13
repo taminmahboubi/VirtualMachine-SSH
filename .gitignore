@@ -11,3 +11,5 @@
 
 pkg/
 src/
+docker_ssh_logins.sh
+vm_details.txt
