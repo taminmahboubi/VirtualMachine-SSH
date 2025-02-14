@@ -13,3 +13,6 @@ pkg/
 src/
 docker_ssh_logins.sh
 vm_details.txt
+.docker_ssh_logins.sh.swp
+.vm_ssh_logins.sh.swp
+vm_ssh_logins_backupcode
