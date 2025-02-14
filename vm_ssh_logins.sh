@@ -11,9 +11,9 @@ NORMAL=$'\e[0m'  # To reset back to normal text
 GREEN=$'\e[32m'  # 2 is the color code for green
 NC=$'\e[0m'        # Reset color
 RED=$'\e[31m'
-GRAY=$'\e[0;37m]'
-AMBER=$'\e[0;33m]'
-BLUE=$'\e[0;34m]'
+GRAY=$'\e[0;37m'
+AMBER=$'\e[0;33m'
+BLUE=$'\e[0;34m'
 YELLOW=$'\e[0;33m'
 
 while IFS= read -r vm_name; do # reads input line by line, storing each line in the vm_name variable
@@ -46,50 +46,62 @@ vm_state() {
 }
 
 vm_start() {
-    
-    for name in "${vm_names[@]}"; do
-        while [ ! "$vm_status" == "running" ]; do
-            echo -e "Do you want to ${BOLD}START${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}? (yes/no)"
-            read start_vm
-            if [ "$start_vm" == "yes" ]; then
-                VBoxManage startvm "$name" --type headless >/dev/null 2>&1
-                echo -e "[$name] - ${GREEN}Started..${NC}"
-                echo -e "[$name] - ${GREEN}Running${NC}"
-                break
-            elif [ "$start_vm" == "no" ]; then
-                break
-            else
-                echo "invalid input. Please Enter 'yes' or 'no'" 
-                continue
-            fi
-        done
+
+    stopped=true
+            
+    while $stopped; do
+        echo -e "Do you want to ${BOLD}START${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}? (yes/no)"
+        read start_vm
+        if [ "$start_vm" == "yes" ]; then
+            VBoxManage startvm "$name" --type headless >/dev/null 2>&1
+            echo -e "[$name] - ${GREEN}Started..${NC}"
+            echo -e "[$name] - ${GREEN}Running${NC}"
+            stopped=false
+            break
+        elif [ "$start_vm" == "no" ]; then
+            break
+        else
+            echo "invalid input. Please Enter 'yes' or 'no'" 
+            continue
+        fi
     done
 
 }
 
 vm_stop() {
-   
+    
+    running=true
 
-    for name in "${vm_names[@]}"; do
-        while [ "$vm_status" == "running" ]; do
-            echo -e "Do you want to ${BOLD}STOP${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}? (yes/no)"
-            read stop_vm
-            if [ "$stop_vm" == "yes" ]; then
-                VBoxManage controlvm "$name" poweroff >/dev/null 2>&1
-                echo -e "[$name] - ${AMBER}Shutting Down.. ${NC}"
-                echo -e "[$name] - ${RED}Power Off${NC}"
-                break
-            elif [ "$stop_vm" == "no" ]; then
-                break
-            else
-                echo "invalid input. Please Enter 'yes' or 'no'" 
-                continue
-            fi
-        done
+    while $running; do
+        echo -e "Do you want to ${BOLD}STOP${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}? (yes/no)"
+        read stop_vm
+        if [ "$stop_vm" == "yes" ]; then
+            VBoxManage controlvm "$name" poweroff >/dev/null 2>&1
+            echo -e "[$name] - ${RED}Shutting Down..${NC}"
+            echo -e "[$name] - ${AMBER}Power Off${NC}"
+            running=false
+            break
+        elif [ "$stop_vm" == "no" ]; then
+            break
+        else
+            echo "invalid input. Please Enter 'yes' or 'no'" 
+            continue
+        fi
     done
 
 }
 
+
+start_or_stop() {
+    for name in "${vm_names[@]}"; do
+        current_status=$(VBoxManage showvminfo "$name" | grep "State:" | awk '{if ($3 == "off") print $2,$3; else print $2}')
+        if [ "$current_status" == "running" ]; then
+            vm_stop
+        elif [ ! "$current_status" == "running" ]; then
+            vm_start
+        fi
+    done
+}
 
 echo "[=============== Virtual Machines ===============]"
 
@@ -97,9 +109,6 @@ for name in "${vm_names[@]}"; do
 	vm_state "$name"
 done
 
-
-
-vm_start
-
 echo "[===============================================]"
-vm_stop 
+ 
+ start_or_stop
