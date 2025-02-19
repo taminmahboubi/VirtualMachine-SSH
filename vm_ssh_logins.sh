@@ -333,15 +333,6 @@ get_ip_address() {
         fi
     done
 
-
-    for thing in "${!nodes_ips[@]}"; do
-        echo "key: '$thing'  value: '${nodes_ips[$thing]}'"
-    done
-    
-    for other in "${!ssh_id_name[@]}"; do
-        echo "key: $other  value: ${ssh_id_name[$other]}"
-    done
-    
     # Store the IP addresses
     for node in "${vm_names[@]}"; do
         for key in "${!nodes_ips[@]}"; do
@@ -351,22 +342,40 @@ get_ip_address() {
         done
     done
 
-
-
-
 }
 
 wait_for_ips() {
-    echo "IPs: ${AMBER}Loading...${NC}"
-    local count_vms=${#vm_ips[@]}
+    local loading_frames=("Loading.  " "Loading.. " "Loading...")  # Animation frames
+    local frame_index=0
 
-    while [ "$count_vms" -lt "$num_of_vms" ]; do
-        echo "IPs retried: $count_vms out of $num_of_vms"
-        sleep 10   # wait for 1 second before checking again
+    echo -ne "IPs: ${AMBER}Loading.${NC}"  # Initial loading message
+
+    while true; do
+        get_ip_address  # Refresh IPs each iteration
+        count_vms=${#vm_ips[@]}  # Update count after running get_ip_address
+        
+        if [ "$count_vms" -ge "$num_of_vms" ]; then
+            break  # Exit loop when all IPs are retrieved
+        fi
+
+        # Print animation in the same spot
+        echo -ne "\rIPs: ${AMBER}${loading_frames[$frame_index]}${NC}"
+        frame_index=$(( (frame_index + 1) % 3 ))  # Cycle through frames
+
+        sleep 1  # Wait before retrying
     done
 
-    echo "IPs: ${GREEN}Loaded!${NC}"
+    # 🔹 Final forced check to ensure the last IP is captured
+    get_ip_address  
+    count_vms=${#vm_ips[@]}
+
+    if [ "$count_vms" -lt "$num_of_vms" ]; then
+        echo -e "\r${RED}Warning: Not all IPs were retrieved! ($count_vms/$num_of_vms)${NC}"
+    else
+        echo -e "\rIPs: ${GREEN}Loaded!     ${NC}"  # Overwrite animation with final message
+    fi
 }
+
 
 # function to convert MAC addresses to uppercase, for matching
 to_upper() {
