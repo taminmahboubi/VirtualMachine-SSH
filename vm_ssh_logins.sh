@@ -1,10 +1,14 @@
 #!/bin/bash
 
+# Ensure terminal resets properly when user exits (CTRL+C)
+trap 'tput cnorm; tput cup 0 0; clear; exit' SIGINT
+tput civis  # Hide cursor
 
 #  Get the list of VM names and store them in an array
 vm_names=() # Initialize an empty array
 
 vm_extracted_names=$(VBoxManage list vms | awk -F '"' '{print $2}')
+
 
 # Get IP addresses of VM's(Bridged Networking)
 vm_ips=()
@@ -40,12 +44,12 @@ HI_YELLOW=$'\e[0;93m'
 BHI_YELLOW=$'\e[1;93m'  # Background High Intensity
 BHI_RED=$'\e[41m'
 BHI_GREEN=$'\e[42m'
+DARK_GRAY=$'\033[30m'
 
 while IFS= read -r vm_name; do # reads input line by line, storing each line in the vm_name variable
 	vm_names+=("$vm_name")  # Add each name to the array
 done <<< "$vm_extracted_names" # takes the output of vm_extracted_names(list of vm names)and feeds it line by line to the while loop
 
-stop_update=false  # Global control variable
 
 vm_state() {
     vm=$1
@@ -76,38 +80,12 @@ vm_state() {
 
 }
 
-
-state_transition() {
-    local current_vm="$1"
-    local current_state="$2"
-    local middle_state="$3"
-    local final_state="$4"
-
-    local loading_frames=("." ".." "...")
-    
-    # Show current state for 1 second
-    echo -ne "\r[$current_vm] - $current_state   "
-    sleep 0.1
-    
-    # Animate middle state for 3 seconds
-    for ((i=0; i<3; i++)); do
-        for frame in "${loading_frames[@]}"; do
-            echo -ne "\r[$current_vm] - $middle_state$frame   "
-            sleep 0.1
-        done
-    done
-
-    # Display final state
-    echo -e "\r[$current_vm] - $final_state      "
-}
-
 list_vms() {
     for name in "${vm_names[@]}"; do
-        
-        vm_state "$name" 
-        
+        vm_state "$name"  # Get the VM state
     done
 }
+
 
 
 yes_no_menu() {
@@ -150,18 +128,19 @@ yes_no_menu() {
 
 
 vm_start() {
+    name=$1
     prompt="${BOLD}START${NORMAL} Virtual Machine [${YELLOW}${BOLD}$name${NORMAL}${NC}]?"
     yes_no_menu "$prompt" \
     'VBoxManage startvm "$name" --type headless >/dev/null 2>&1 && stopped=false && break' \
     'break'
 
-
-    #state_transition "$name" "${AMBER}Power Off${NC}" "${GREEN}${BOLD}Started${NORMAL}${NC}" "${GREEN}${BOLD}Running ${NC}(${GREEN}ON${NC})${NORMAL}"
+    update_vm_statuses "$1"
 }
 
 
 
 vm_stop() {
+    name=$1
 
     prompt="${BOLD}STOP${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}?"
     
@@ -169,8 +148,7 @@ vm_stop() {
     'VBoxManage controlvm "$name" poweroff >/dev/null 2>&1 && break' \
     'break'
 
-
-    #state_transition "$name" "${GREEN}${BOLD}Running ${NC}${NORMAL}" "${RED}Shutting Down${NC}" "${AMBER}Power Off${NC}"
+    update_vm_statuses "$1"
 
 }
 
@@ -179,9 +157,9 @@ start_or_stop_vm() {
     for name in "${vm_names[@]}"; do
         current_status=$(VBoxManage showvminfo "$name" | grep "State:" | awk '{if ($3 == "off") print $2,$3; else print $2}')
         if [ "$current_status" == "running" ]; then
-            vm_stop
+            vm_stop "$name"
         elif [ ! "$current_status" == "running" ]; then
-            vm_start
+            vm_start "$name"
         fi
     done
 }
@@ -231,9 +209,8 @@ check_ssh() {
         ssh_name_id["${active_node_names[i]}"]="${active_node_ids[i]}"
     done
 
-    
 
-    for i in "${vm_names[@]}"; do
+      for i in "${vm_names[@]}"; do
         match_found=false
         for active in "${active_node_names[@]}"; do
             if [[ "$i" == "$active" ]]; then
@@ -248,10 +225,11 @@ check_ssh() {
         fi
     done
 
-
     start_or_stop_ssh
 
 }
+
+
 
 id_to_name() {
     local current_id="$1"
@@ -400,15 +378,21 @@ get_ip_address() {
 }
 
 
-
+loop_name_id() {
+     for ip in ${!nodes_ips[@]}; do
+        echo "${GRAY}$ip -> ${nodes_ips[$ip]}${NC}"
+    done
+}
 
 wait_for_ips() {
         
     tput civis  # Hide cursor
 
+    counter=0
     found=false  # Condition flag
+    break_lvl=2  # Number of loops to exit
     node_count=${#nodes_ips[@]} 
-    progress_total=$num_of_vms    # Total steps (editable)
+    progress_total=$active_vms    # Total steps (editable)
     ip_text="[IP Addresses]"  # Editable IP header text
 
     while true; do
@@ -423,18 +407,25 @@ wait_for_ips() {
             echo -ne "\e[32m$ip_text${NC} - [${RED}$node_count${NC}/$progress_total] - ${RED}Finding$dots${NC} \e[0m\r"  # Keep animating
             sleep 0.3
 
+            ((counter++))
             # Simulate progress updating 
-            if [[ "$node_count" == "$progress_total" ]]; then
+            if [[ "$node_count" -ge "$progress_total" ]]; then
                 found=true  # Set flag to stop animation
+                yes_no_menu "View loaded VM's and IPs?" "loop_name_id" ""
                 break
-            else
-                for node in "${!nodes_ips[@]}"; do
-                    echo -ne "                                                                          ${GRAY}| Trying to find [$node] |${NC}"
-                done
+            elif [[ $counter -eq 40 ]]; then
+                echo "Processing... This might take a few moments."
+                yes_no_menu "View loaded VM's and IPs?" "loop_name_id" ""
+                break
+            elif [[ $counter -eq 80 ]]; then
+                echo -e "${BHI_YELLOW}This is taking too long. Please check your connection.${NC}"
+                break $break_lvl
             fi  
         done
 
     done
+
+    
 
 }
 
@@ -444,22 +435,76 @@ to_upper() {
 }
 
 
+
+update_vm_statuses() {
+    node=$1
+
+
+    ((update_row++))
+    for name in "${vm_names[@]}"; do
+        
+        if [[ "$name" == "$node" ]]; then
+            tput cup "$update_row" 0  # Move to the correct row
+            vm_state "$node"  # Fetch new VM status
+            
+        else
+            continue
+        fi
+    done
+
+    # Return to original saved position
+    tput cup $((current_row+=3)) "$current_col"
+}
+
+
+# Function to get cursor position
+get_cursor_position() {
+    exec < /dev/tty
+    oldstty=$(stty -g)
+    stty raw -echo min 0 time 1
+
+    # Request cursor position
+    echo -ne "\033[6n" > /dev/tty
+
+    # Read response from terminal
+    IFS=';' read -r -d R -a pos
+
+    # Restore terminal settings
+    stty "$oldstty"
+
+    # Extract row and column values
+    local row=${pos[0]#*[}
+    local col=${pos[1]}
+
+    echo "$row" "$col"
+}
+
+read vm_list_row  < <(get_cursor_position)
+
+
+
 # Start of Application -----------------------------------------------------------------------------------------------------------
+tput reset
+echo -e "[=============== Virtual Machines ===============]"
 
-echo -e "[=============== Virtual Machines ===============]\n"
 
-list_vms
+list_vms  # Print nodes using the loop
 
 
 echo -e "[======== Power ${GREEN}ON${NC}/${RED}OFF${NC} Virtual Machines? ========]\n"
+read current_row current_col < <(get_cursor_position)
+
 
 start_or_stop_vm
+read current_row current_col < <(get_cursor_position)
+
 get_ip_address
 wait_for_ips
 
 echo -e "[=============== Active SSH Connections ===============]\n"
 check_ssh
 
+trap 'kill $bg_pid; tput cnorm; clear; exit' SIGINT
 
 
 
