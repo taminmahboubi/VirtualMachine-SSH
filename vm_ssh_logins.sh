@@ -1,5 +1,6 @@
 #!/bin/bash
 
+
 #  Get the list of VM names and store them in an array
 vm_names=() # Initialize an empty array
 
@@ -36,80 +37,140 @@ AMBER=$'\e[0;33m'
 BLUE=$'\e[0;34m'
 YELLOW=$'\e[0;33m'
 HI_YELLOW=$'\e[0;93m'
-BHI_YELLOW=$'\e[1;93m'
+BHI_YELLOW=$'\e[1;93m'  # Background High Intensity
+BHI_RED=$'\e[41m'
+BHI_GREEN=$'\e[42m'
 
 while IFS= read -r vm_name; do # reads input line by line, storing each line in the vm_name variable
 	vm_names+=("$vm_name")  # Add each name to the array
 done <<< "$vm_extracted_names" # takes the output of vm_extracted_names(list of vm names)and feeds it line by line to the while loop
 
-vm_state() {
-	vm=$1
-	
-	vm_status=$(VBoxManage showvminfo "$vm" | grep "State:" | awk '{if ($3 == "off") print $2,$3; else print $2}')
+stop_update=false  # Global control variable
 
-	case "$vm_status" in
-		"running")
-			echo -e "State of VM: [$vm] - ${GREEN}${BOLD}Running ${NC}(${GREEN}ON${NC})${NORMAL}"
-			;;
-		"powered off")
-			echo -e "State of VM: [$vm] - ${RED}${BOLD}Powered OFF${NORMAL}${NC}"
-			;;
-		"stopped")
-			echo -e "State of VM: [$vm] - ${AMBER}${BOLD}Stopped${NORMAL}${NC}"
-			;;
-		"paused")
-			echo -e "State of VM: [$vm] - ${GRAY}${BOLD}Paused${NORMAL}${NC}"
-			;;
-		"saved")
-			echo -e "State of VM: [$vm] - ${BLUE}${BOLD}Saved${NORMAL}${NC}" 
-			;;
-	esac
-	
+vm_state() {
+    vm=$1
+
+    vm_status=$(VBoxManage showvminfo "$vm" | grep "State:" | awk '{if ($3 == "off") print $2,$3; else print $2}')
+
+
+    case "$vm_status" in
+        "running")
+            echo -e "[$vm] - ${BHI_GREEN}Running (ON)${NC}"
+            ;;
+        "powered off")
+            echo -e "[$vm] - ${BHI_RED}Powered OFF ${NC}"
+            ;;
+        "stopped")
+            echo -e "[$vm] - ${AMBER}${BOLD}Stopped${NORMAL}${NC}"
+            ;;
+        "paused")
+            echo -e "[$vm] - ${GRAY}${BOLD}Paused${NORMAL}${NC}"
+            ;;
+        "saved")
+            echo -e "[$vm] - ${BLUE}${BOLD}Saved${NORMAL}${NC}" 
+            ;;
+        "aborted")
+            echo -e "[$vm] - ${BHI_RED}ABORTED${NC}" 
+            ;;
+    esac
+
 }
+
+
+state_transition() {
+    local current_vm="$1"
+    local current_state="$2"
+    local middle_state="$3"
+    local final_state="$4"
+
+    local loading_frames=("." ".." "...")
+    
+    # Show current state for 1 second
+    echo -ne "\r[$current_vm] - $current_state   "
+    sleep 0.1
+    
+    # Animate middle state for 3 seconds
+    for ((i=0; i<3; i++)); do
+        for frame in "${loading_frames[@]}"; do
+            echo -ne "\r[$current_vm] - $middle_state$frame   "
+            sleep 0.1
+        done
+    done
+
+    # Display final state
+    echo -e "\r[$current_vm] - $final_state      "
+}
+
+list_vms() {
+    for name in "${vm_names[@]}"; do
+        
+        vm_state "$name" 
+        
+    done
+}
+
+
+yes_no_menu() {
+    local prompt="$1"
+    local yes_cmd="$2"
+    local no_cmd="$3"
+    local options=("Yes" "No")
+    local selected=0  # Start with "Yes" selected
+
+    echo -e "\n$prompt"  # Print the question
+    tput civis  # Hide cursor
+
+    while true; do
+        echo -ne "\r"  # Move to the start of the line
+        for i in "${!options[@]}"; do
+            if [[ $i -eq $selected ]]; then
+                echo -ne "\e[7m ${options[$i]} \e[0m "  # Full-line highlight
+            else
+                echo -ne " ${options[$i]}  "
+            fi
+        done
+
+        read -rsn1 key  # Read single key input
+        case "$key" in
+            $'\x1b') read -rsn2 key
+                [[ $key == "[A" || $key == "[D" ]] && selected=0  # Up/Left -> "Yes"
+                [[ $key == "[B" || $key == "[C" ]] && selected=1  # Down/Right -> "No"
+                ;;
+            "")  # Enter key
+                echo  # Move to a new line after selection
+                [[ $selected -eq 0 ]] && eval "$yes_cmd" || eval "$no_cmd"
+                return
+                ;;
+        esac
+    done
+
+    tput cnorm  # Show cursor again
+
+}
+
 
 vm_start() {
+    prompt="${BOLD}START${NORMAL} Virtual Machine [${YELLOW}${BOLD}$name${NORMAL}${NC}]?"
+    yes_no_menu "$prompt" \
+    'VBoxManage startvm "$name" --type headless >/dev/null 2>&1 && stopped=false && break' \
+    'break'
 
-    stopped=true
-            
-    while $stopped; do
-        echo -e "${BOLD}START${NORMAL} Virtual Machine [${YELLOW}${BOLD}$name${NORMAL}${NC}]?: ${BOLD}(yes/no)${NORMAL}"
-        read start_vm
-        if [ "$start_vm" == "yes" ]; then
-            VBoxManage startvm "$name" --type headless >/dev/null 2>&1
-            echo -e "[$name] - ${GREEN}${BOLD}Started..${NORMAL}${NC}"
-            echo -e "[$name] - ${GREEN}${BOLD}Running ${NC}(${GREEN}ON${NC})${NORMAL}"
-            stopped=false
-            break
-        elif [ "$start_vm" == "no" ]; then
-            break
-        else
-            echo -e "invalid input! Please Enter '${BOLD}yes${NORMAL}' or '${BOLD}no${NORMAL}'"
-            continue
-        fi
-    done
 
+    #state_transition "$name" "${AMBER}Power Off${NC}" "${GREEN}${BOLD}Started${NORMAL}${NC}" "${GREEN}${BOLD}Running ${NC}(${GREEN}ON${NC})${NORMAL}"
 }
 
-vm_stop() {
-    
-    running=true
 
-    while $running; do
-        echo -e "${BOLD}STOP${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}? (yes/no)"
-        read stop_vm
-        if [ "$stop_vm" == "yes" ]; then
-            VBoxManage controlvm "$name" poweroff >/dev/null 2>&1
-            echo -e "[$name] - ${RED}Shutting Down..${NC}"
-            echo -e "[$name] - ${AMBER}Power Off${NC}"
-            running=false
-            break
-        elif [ "$stop_vm" == "no" ]; then
-            break
-        else
-            echo -e "invalid input! Please Enter '${BOLD}yes${NORMAL}' or '${BOLD}no${NORMAL}'" 
-            continue
-        fi
-    done
+
+vm_stop() {
+
+    prompt="${BOLD}STOP${NORMAL} the Virtual Machine ${YELLOW}[$name]${NC}?"
+    
+    yes_no_menu "$prompt" \
+    'VBoxManage controlvm "$name" poweroff >/dev/null 2>&1 && break' \
+    'break'
+
+
+    #state_transition "$name" "${GREEN}${BOLD}Running ${NC}${NORMAL}" "${RED}Shutting Down${NC}" "${AMBER}Power Off${NC}"
 
 }
 
@@ -124,7 +185,6 @@ start_or_stop_vm() {
         fi
     done
 }
-
 
 
 
@@ -171,7 +231,7 @@ check_ssh() {
         ssh_name_id["${active_node_names[i]}"]="${active_node_ids[i]}"
     done
 
-
+    
 
     for i in "${vm_names[@]}"; do
         match_found=false
@@ -187,6 +247,7 @@ check_ssh() {
             echo -e "[$i]: ${RED}SSH Inactive${NC}"
         fi
     done
+
 
     start_or_stop_ssh
 
@@ -246,52 +307,36 @@ start_or_stop_ssh() {
             done
 
         elif [ ! "$current_status" == "running" ]; then
+        
             echo -e "${BHI_YELLOW}Virtual Machine [${NC}$i${BHI_YELLOW}] is not running, cannot establish SSH connection!${NC}"
+
         fi
     done
 }
 
+
 start_ssh() {
     ssh_name=$1
     ssh_ip=$2
-    local no_ssh=true
 
+    prompt="do you want to open SSH session for [$ssh_name]?"
 
-    while $no_ssh; do
-        echo -e "do you want to open SSH session for [$ssh_name]? (yes/no)"
-        read ssh_start
-        if [ "$ssh_start" == "yes" ];then
-            ssh "$ssh_name"@"$ssh_ip" -f -N
-            no_ssh=false
-        elif [ "$ssh_start" == "no" ]; then
-            break
-        else
-            echo -e "invalid input! Please Enter '${BOLD}yes${NORMAL}' or '${BOLD}no${NORMAL}'" 
-            continue
-        fi
-    done
+    yes_no_menu "$prompt" \
+    'ssh "$ssh_name"@"$ssh_ip" -f -N && ssh=false && break' \
+    'break'
 
 }
 
 stop_ssh() {
     ssh_id=$1
     local no_ssh=true
-    idToName=$(id_to_name "$ssh_id")   
+    idToName=$(id_to_name "$ssh_id")  
 
+    prompt="do you want to STOP SSH session for [$idToName]?"
 
-    while $no_ssh; do
-        echo -e "do you want to STOP SSH session for [$idToName]? (yes/no)"
-        read ssh_stop
-        if [ "$ssh_stop" == "yes" ];then
-            kill "$ssh_id"
-            no_ssh=false
-        elif [ "$ssh_stop" == "no" ]; then
-            break
-        else
-            echo -e "invalid input! Please Enter '${BOLD}yes${NORMAL}' or '${BOLD}no${NORMAL}'" 
-            continue
-        fi
-    done
+    yes_no_menu "$prompt" \
+    'kill "$ssh_id" && no_ssh=false' \
+    'break' 
 
 }
 
@@ -342,40 +387,56 @@ get_ip_address() {
         done
     done
 
+    # echo "mac addresses:"
+    # for ip in ${!mac_ips[@]}; do
+    #     echo "$ip -> ${mac_ips[$ip]}"
+    # done
+
+    # echo "Ip addresses:"
+    # for ip in ${!nodes_ips[@]}; do
+    #     echo "$ip -> ${nodes_ips[$ip]}"
+    # done
+
 }
+
+
+
 
 wait_for_ips() {
-    local loading_frames=("Loading.  " "Loading.. " "Loading...")  # Animation frames
-    local frame_index=0
+        
+    tput civis  # Hide cursor
 
-    echo -ne "IPs: ${AMBER}Loading.${NC}"  # Initial loading message
+    found=false  # Condition flag
+    node_count=${#nodes_ips[@]} 
+    progress_total=$num_of_vms    # Total steps (editable)
+    ip_text="[IP Addresses]"  # Editable IP header text
 
     while true; do
-        get_ip_address  # Refresh IPs each iteration
-        count_vms=${#vm_ips[@]}  # Update count after running get_ip_address
-        
-        if [ "$count_vms" -ge "$num_of_vms" ]; then
-            break  # Exit loop when all IPs are retrieved
+
+        if [[ "$found" == "true" ]]; then
+            echo -ne "\e[32m$ip_text${NC} - [${RED}$node_count${NC}/$progress_total]- ${GREEN}Found! ${NC}    \e[0m\n"  # Overwrite animation with "Found Done"
+            tput cnorm  # Show cursor again
+            break  # Stop the animation
         fi
 
-        # Print animation in the same spot
-        echo -ne "\rIPs: ${AMBER}${loading_frames[$frame_index]}${NC}"
-        frame_index=$(( (frame_index + 1) % 3 ))  # Cycle through frames
+        for dots in "." ".." "..." "    "; do
+            echo -ne "\e[32m$ip_text${NC} - [${RED}$node_count${NC}/$progress_total] - ${RED}Finding$dots${NC} \e[0m\r"  # Keep animating
+            sleep 0.3
 
-        sleep 1  # Wait before retrying
+            # Simulate progress updating 
+            if [[ "$node_count" == "$progress_total" ]]; then
+                found=true  # Set flag to stop animation
+                break
+            else
+                for node in "${!nodes_ips[@]}"; do
+                    echo -ne "                                                                          ${GRAY}| Trying to find [$node] |${NC}"
+                done
+            fi  
+        done
+
     done
 
-    # 🔹 Final forced check to ensure the last IP is captured
-    get_ip_address  
-    count_vms=${#vm_ips[@]}
-
-    if [ "$count_vms" -lt "$num_of_vms" ]; then
-        echo -e "\r${RED}Warning: Not all IPs were retrieved! ($count_vms/$num_of_vms)${NC}"
-    else
-        echo -e "\rIPs: ${GREEN}Loaded!     ${NC}"  # Overwrite animation with final message
-    fi
 }
-
 
 # function to convert MAC addresses to uppercase, for matching
 to_upper() {
@@ -387,17 +448,15 @@ to_upper() {
 
 echo -e "[=============== Virtual Machines ===============]\n"
 
-for name in "${vm_names[@]}"; do
-	vm_state "$name"
-done
-
-echo ""
+list_vms
 
 
 echo -e "[======== Power ${GREEN}ON${NC}/${RED}OFF${NC} Virtual Machines? ========]\n"
+
 start_or_stop_vm
 get_ip_address
 wait_for_ips
+
 echo -e "[=============== Active SSH Connections ===============]\n"
 check_ssh
 
